@@ -18,15 +18,15 @@ $headers = @{
 
 $DownloadRoot = Join-Path $env:TEMP "thcs2"
 
-function Get-Contents([string]$Path = "") {
-  $uri = if ([string]::IsNullOrWhiteSpace($Path)) { $API_BASE } else { "$API_BASE/$Path" }
-  Invoke-RestMethod -Headers $headers -Uri $uri -ErrorAction Stop
-}
-
 function Ensure-Dir([string]$Dir) {
   if (-not (Test-Path -LiteralPath $Dir)) {
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
   }
+}
+
+function Get-Contents([string]$Path = "") {
+  $uri = if ([string]::IsNullOrWhiteSpace($Path)) { $API_BASE } else { "$API_BASE/$Path" }
+  Invoke-RestMethod -Headers $headers -Uri $uri -ErrorAction Stop
 }
 
 function Download-File([string]$RepoPath, [string]$LocalPath) {
@@ -40,22 +40,6 @@ function Download-File([string]$RepoPath, [string]$LocalPath) {
     Write-Host "[FAIL] $RepoPath" -ForegroundColor Red
     Write-Host "       $($_.Exception.Message)" -ForegroundColor DarkRed
     return $false
-  }
-}
-
-function Download-Tree([string]$Path = "", [string]$LocalBase = $DownloadRoot) {
-  $items = Get-Contents -Path $Path
-
-  foreach ($it in $items) {
-    if ($it.type -eq "file") {
-      $repoPath  = if ([string]::IsNullOrWhiteSpace($Path)) { $it.name } else { "$Path/$($it.name)" }
-      $localPath = Join-Path $LocalBase $repoPath
-      [void](Download-File -RepoPath $repoPath -LocalPath $localPath)
-    }
-    elseif ($it.type -eq "dir") {
-      $subPath = if ([string]::IsNullOrWhiteSpace($Path)) { $it.name } else { "$Path/$($it.name)" }
-      Download-Tree -Path $subPath -LocalBase $LocalBase
-    }
   }
 }
 
@@ -91,7 +75,8 @@ function Show-Menu($menu) {
   }
 
   Write-Host ""
-  Write-Host "A - Tai toan bo ve $DownloadRoot"
+  Write-Host "C - Tai chi bai*.cpp ve $DownloadRoot (khong nen)"
+  Write-Host "T - Tai TOAN BO repo ve $DownloadRoot (khong nen)"
   Write-Host "Q - Thoat | R - Refresh"
   Write-Host ""
 }
@@ -118,18 +103,70 @@ function View-File([string]$file) {
   Pause
 }
 
-function Download-All {
+function Download-AllTree([string]$Path = "") {
+  $items = Get-Contents -Path $Path
+
+  foreach ($it in $items) {
+    if ($it.type -eq "file") {
+      $repoPath  = if ([string]::IsNullOrWhiteSpace($Path)) { $it.name } else { "$Path/$($it.name)" }
+      $localPath = Join-Path $DownloadRoot $repoPath
+      [void](Download-File -RepoPath $repoPath -LocalPath $localPath)
+    }
+    elseif ($it.type -eq "dir") {
+      $subPath = if ([string]::IsNullOrWhiteSpace($Path)) { $it.name } else { "$Path/$($it.name)" }
+      Download-AllTree -Path $subPath
+    }
+  }
+}
+
+function Download-CppOnly {
   Clear-Host
-  Write-Host "Se tai TOAN BO repo ve: $DownloadRoot" -ForegroundColor Cyan
-  Write-Host "Dang tai..." -ForegroundColor Cyan
-  Write-Host ""
-
   Ensure-Dir $DownloadRoot
-  Download-Tree
 
+  Write-Host "Tai chi bai*.cpp ve: $DownloadRoot" -ForegroundColor Cyan
   Write-Host ""
-  Write-Host "Hoan tat. Thu muc: $DownloadRoot" -ForegroundColor Green
-  Pause
+
+  try {
+    $items = Get-Contents
+    $cpp = $items | Where-Object { $_.type -eq "file" -and $_.name -like "bai*.cpp" } | Sort-Object name
+    if (-not $cpp) {
+      Write-Host "Khong tim thay bai*.cpp o root." -ForegroundColor Red
+      Pause
+      return
+    }
+
+    foreach ($f in $cpp) {
+      $repoPath  = $f.name
+      $localPath = Join-Path $DownloadRoot $f.name
+      [void](Download-File -RepoPath $repoPath -LocalPath $localPath)
+    }
+
+    Write-Host ""
+    Write-Host "Hoan tat. Thu muc: $DownloadRoot" -ForegroundColor Green
+    Pause
+  } catch {
+    Write-Host "Loi khi tai bai*.cpp: $($_.Exception.Message)" -ForegroundColor Red
+    Pause
+  }
+}
+
+function Download-FullRepo {
+  Clear-Host
+  Ensure-Dir $DownloadRoot
+
+  Write-Host "Tai TOAN BO repo ve: $DownloadRoot" -ForegroundColor Cyan
+  Write-Host "Dang tai (de quy)..." -ForegroundColor Cyan
+  Write-Host ""
+
+  try {
+    Download-AllTree
+    Write-Host ""
+    Write-Host "Hoan tat. Thu muc: $DownloadRoot" -ForegroundColor Green
+    Pause
+  } catch {
+    Write-Host "Loi khi tai full repo: $($_.Exception.Message)" -ForegroundColor Red
+    Pause
+  }
 }
 
 # ================================
@@ -143,12 +180,13 @@ if (-not $menu -or $menu.Count -eq 0) {
 
 while ($true) {
   Show-Menu $menu
-  $input = Read-Host "Nhap so bai (vd: 01) / A / R / Q"
+  $input = Read-Host "Nhap so bai (vd: 01) / C / T / R / Q"
   if ([string]::IsNullOrWhiteSpace($input)) { continue }
 
   if ($input -match '^[Qq]$') { break }
   if ($input -match '^[Rr]$') { $menu = Load-Menu; continue }
-  if ($input -match '^[Aa]$') { Download-All; continue }
+  if ($input -match '^[Cc]$') { Download-CppOnly; continue }
+  if ($input -match '^[Tt]$') { Download-FullRepo; continue }
 
   if ($input -notmatch '^\d+$') {
     Write-Host "Lua chon khong hop le!" -ForegroundColor Red
